@@ -9,6 +9,12 @@
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\file_info.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\file_info.h" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{6D98CBDA-AFF1-4EFD-8AD3-55E6D9DA4284}</ProjectGuid>
     <RootNamespace>SSBRendererDShow</RootNamespace>
@@ -46,7 +52,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <SubSystem>Windows</SubSystem>
       <AdditionalLibraryDirectories>src\libs;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>strmbase.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>strmbase.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
