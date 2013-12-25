@@ -1,0 +1,10 @@
+# Build
+/bin
+
+# MSVC10 project files
+/ipch
+*.sdf
+*.sln
+*.suo
+*.user
+*.ncb
