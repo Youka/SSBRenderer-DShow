@@ -21,7 +21,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 // File informations
 #include "file_info.h"
 // Include other necessary classes
-#include <string>
+#include "textconv.hpp"
 
 // DLL instance getter for VC compilers
 extern "C" IMAGE_DOS_HEADER __ImageBase;
@@ -42,19 +42,112 @@ interface ISSBRendererConfig : public IUnknown{
 	virtual void SetFile(std::string) = 0;
 };
 
+// Taskicon
+class TaskIcon{
+	private:
+		// Notify icon data
+		wchar_t name[64];
+		struct WindowData{
+			void (*on_click)(void*);
+			void* userdata;
+		}data;
+		HWND wnd;
+		NOTIFYICONDATA icon_data;
+		// Messages processing
+		static LRESULT CALLBACK get_window_messages(HWND wnd, UINT msg, WPARAM wParam, LPARAM lParam){
+			switch(msg){
+				case WM_USER+1:
+					switch(lParam){
+						case WM_LBUTTONDOWN:
+							{
+								WindowData* data = reinterpret_cast<WindowData*>(GetWindowLongPtrW(wnd, GWLP_USERDATA));
+								data->on_click(data->userdata);
+							}
+							break;
+					}
+			}
+			return DefWindowProc(wnd, msg, wParam, lParam);
+		}
+	public:
+		TaskIcon(UINT id, const wchar_t* name, HICON ico, void(*on_click)(void*), void* userdata){
+			// Save data in right format
+			wcsncpy(this->name, name, 64); this->name[63] = L'\0';
+			this->data.on_click = on_click;
+			this->data.userdata = userdata;
+			// Register window class
+			WNDCLASSEXW wnd_class = {0};
+			wnd_class.cbSize = sizeof(WNDCLASSEXW);
+			wnd_class.lpfnWndProc = get_window_messages;
+			wnd_class.hInstance = DLL_INSTANCE;
+			wnd_class.hIcon = ico;
+			wnd_class.lpszClassName = this->name;
+			RegisterClassEx(&wnd_class);
+			// Create window
+			this->wnd = CreateWindowW(this->name, L"Taskicon dummy window", 0x0, 0, 0, 100, 100, NULL, NULL, DLL_INSTANCE, NULL);
+			SetWindowLongPtrW(wnd, GWLP_USERDATA, reinterpret_cast<LONG>(&this->data));
+			// Fill icon data
+			this->icon_data.cbSize = sizeof(NOTIFYICONDATA);
+			this->icon_data.hWnd = this->wnd;	// Window for notify messages
+			this->icon_data.uID = id;	// Icon identifier
+			this->icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;	// Messages + Icon + Tooltip
+			this->icon_data.uCallbackMessage = WM_USER + 1;	// Message identifier
+			this->icon_data.hIcon = ico;	// Taskbar image
+			wcscpy(this->icon_data.szTip, this->name);	// Tooltip
+			// Add icon to taskbar
+			Shell_NotifyIconW(NIM_ADD, &this->icon_data);
+		}
+		~TaskIcon(){
+			// Remove icon from taskbar
+			Shell_NotifyIconW(NIM_DELETE, &this->icon_data);
+			// Destroy window
+			DestroyWindow(this->wnd);
+			// Unregister window class
+			UnregisterClassW(this->name, DLL_INSTANCE);
+		}
+};
+
+// Procedur on taskicon left-click
+void taskicon_clicked(void* userdata){
+	// Get config interface
+	ISSBRendererConfig* config = reinterpret_cast<ISSBRendererConfig*>(userdata);
+	// Setup file selection dialog
+	std::string file = config->GetFile();
+	std::wstring filew = utf8_to_utf16(file);
+	wchar_t cfile[MAX_PATH]; wcsncpy(cfile, filew.c_str(), MAX_PATH); cfile[MAX_PATH-1] = L'\0';
+	OPENFILENAMEW ofn = {0};
+	ofn.lStructSize = sizeof(OPENFILENAMEW);
+	ofn.hwndOwner = NULL;
+	ofn.hInstance = DLL_INSTANCE;
+	ofn.lpstrFilter = L"SSB file (*.ssb)\0*.ssb\0\0";
+	ofn.nFilterIndex = 1;
+	ofn.lpstrFile = cfile;
+	ofn.nMaxFile = sizeof(cfile);
+	ofn.lpstrTitle = L"Choose SSB file";
+	ofn.Flags = OFN_FILEMUSTEXIST;
+	// Show file selection dialog
+	if(GetOpenFileNameW(&ofn)){
+		filew = cfile;
+		file = utf16_to_utf8(filew);
+		config->SetFile(file);
+	}else
+		config->SetFile("");
+}
+
 // Video filter
 class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 	private:
 		// Renderer
 		// TODO: implent renderer
 		void* renderer;
+		// Control as taskicon
+		TaskIcon* control;
 		// Critical section for save configuration access from other interfaces
 		CCritSec crit_section;
 		// Configuration
 		std::string filename;
 		// Ctor
 		SSBRenderer(IUnknown* unknown) : CVideoTransformFilter(FILTER_NAMEW, unknown, CLSID_SSBRenderer), renderer(NULL){
-			// TODO: create taskicon
+			this->control = new TaskIcon(0x200, FILTER_NAMEW, LoadIconW(DLL_INSTANCE, MAKEINTRESOURCEW(FILTER_LOGO)), taskicon_clicked, static_cast<ISSBRendererConfig*>(this));
 		}
 	public:
 		// Create class instance
@@ -68,7 +161,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 		~SSBRenderer(){
 			if(this->renderer)
 				delete this->renderer;
-			// TODO: remove taskicon
+			delete this->control;
 		}
 		// Check validation of input media stream
 		HRESULT CheckInputType(const CMediaType* In){
@@ -150,15 +243,10 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			BYTE *src, *dst;
 			LONGLONG start, end;
 			HRESULT hr;
-			// TODO: Get right time
 			// Get time
-			hr = In->GetMediaTime(&start, &end);
-			if(FAILED(hr)){
-				hr = In->GetTime(&start, &end);
-				if(FAILED(hr))
-					return hr;
-			}else
-				start--;	// Fix first frame to index 0
+			hr = In->GetTime(&start, &end);
+			if(FAILED(hr))
+				return hr;
 			// Get frame pointers
 			hr = In->GetPointer(&src);
 			if(FAILED(hr))
@@ -167,9 +255,11 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			if(FAILED(hr))
 				return hr;
 			// Calculate pitch
-			// TODO: const int pitch = this->image->has_alpha ? this->image->width << 2 : this->image->width * 3;
+			BITMAPINFOHEADER *bmp = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pInput->CurrentMediaType().pbFormat)->bmiHeader;
+			const int pitch = bmp->biBitCount == 24 ? bmp->biWidth * 3 : bmp->biWidth << 2;
 			// Send image data through filter process
 			// TODO: this->renderer->render(this->image, start);
+			std::copy(src, src+In->GetSize(), dst);
 			// Frame successfully filtered
 			return S_OK;
 		}
@@ -181,8 +271,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 				this->renderer = NULL;
 			}
 			// Get video infos
-			VIDEOINFOHEADER *video = reinterpret_cast<VIDEOINFOHEADER*>(this->m_pInput->CurrentMediaType().pbFormat);
-			BITMAPINFOHEADER *bmp = &video->bmiHeader;
+			BITMAPINFOHEADER *bmp = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pInput->CurrentMediaType().pbFormat)->bmiHeader;
 			// Get filename for renderer
 			std::string filename = this->GetFile();
 			// Create renderer
