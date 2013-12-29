@@ -18,6 +18,8 @@ Permission is granted to anyone to use this software for any purpose, including 
 #include <CGuid.h>
 // Include windows streams
 #include <streams.h>
+// Include SSBRenderer
+#include "user.h"
 // File informations
 #include "file_info.h"
 // Include other necessary classes
@@ -137,8 +139,7 @@ void taskicon_clicked(void* userdata){
 class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 	private:
 		// Renderer
-		// TODO: implent renderer
-		void* renderer;
+		ssb_renderer renderer;
 		// Control as taskicon
 		TaskIcon* control;
 		// Critical section for save configuration access from other interfaces
@@ -159,8 +160,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 		}
 		// Dtor
 		~SSBRenderer(){
-			if(this->renderer)
-				delete this->renderer;
+			ssb_free_renderer(this->renderer);
 			delete this->control;
 		}
 		// Check validation of input media stream
@@ -254,12 +254,13 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			hr = Out->GetPointer(&dst);
 			if(FAILED(hr))
 				return hr;
-			// Calculate pitch
+			// Copy image to output
+			std::copy(src, src+In->GetActualDataLength(), dst);
+			// Get bitmap info
 			BITMAPINFOHEADER *bmp = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pInput->CurrentMediaType().pbFormat)->bmiHeader;
-			const int pitch = bmp->biBitCount == 24 ? bmp->biWidth * 3 : bmp->biWidth << 2;
-			// Send image data through filter process
-			// TODO: this->renderer->render(this->image, start);
-			std::copy(src, src+In->GetSize(), dst);
+			// Filter output
+			if(this->renderer)
+				ssb_render(this->renderer, dst, bmp->biBitCount == 24 ? bmp->biWidth * 3 : bmp->biWidth << 2, start / 10000);
 			// Frame successfully filtered
 			return S_OK;
 		}
@@ -267,7 +268,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 		HRESULT StartStreaming(){
 			// Free previous renderer (in case of buggy twice start function call)
 			if(this->renderer){
-				delete this->renderer;
+				ssb_free_renderer(this->renderer);
 				this->renderer = NULL;
 			}
 			// Get video infos
@@ -275,12 +276,9 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			// Get filename for renderer
 			std::string filename = this->GetFile();
 			// Create renderer
-			try{
-				// TODO: this->renderer = new (filename.c_str(), bmp->biWidth, bmp->biHeight, bmp->biBitCount == 32, fps, frames);
-			}catch(...){
-				// Return error code
-				return VFW_E_WRONG_STATE;
-			}
+			if(!filename.empty())
+				if(!(this->renderer = ssb_create_renderer(bmp->biWidth, bmp->biHeight, bmp->biBitCount == 32 ? SSB_BGRA : SSB_BGR, filename.c_str(), NULL)))
+					return VFW_E_WRONG_STATE;
 			// Continue with default behaviour
 			return CVideoTransformFilter::StartStreaming();
 		}
@@ -288,7 +286,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 		HRESULT StopStreaming(){
 			// Free renderer
 			if(this->renderer){
-				delete this->renderer;
+				ssb_free_renderer(this->renderer);
 				this->renderer = NULL;
 			}
 			// Continue with default behaviour
@@ -398,7 +396,7 @@ const AMOVIESETUP_FILTER sudFilter =
 {
 	&CLSID_SSBRenderer,         // Filter CLSID
 	FILTER_NAMEW,       // Filter name
-	MERIT_NORMAL,       // Filter merit
+	MERIT_DO_NOT_USE,       // Filter merit
 	2,                      // Number of pins
 	sudpPins                // Pin information
 };
