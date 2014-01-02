@@ -24,6 +24,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 #include "file_info.h"
 // Include other necessary classes
 #include "textconv.hpp"
+#include "imgconv.hpp"
 
 // DLL instance getter for VC compilers
 extern "C" IMAGE_DOS_HEADER __ImageBase;
@@ -172,8 +173,8 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 				In->formattype != FORMAT_VideoInfo || In->cbFormat < sizeof(VIDEOINFOHEADER))
 				return VFW_E_TYPE_NOT_ACCEPTED;
 			// Valid bitmap?
-			VIDEOINFOHEADER* header = reinterpret_cast<VIDEOINFOHEADER*>(In->pbFormat);
-			if(header->bmiHeader.biBitCount != 24 && header->bmiHeader.biBitCount != 32)
+			BITMAPINFOHEADER* bmp = &reinterpret_cast<VIDEOINFOHEADER*>(In->pbFormat)->bmiHeader;
+			if((bmp->biBitCount != 24 && bmp->biBitCount != 32) || bmp->biCompression != BI_RGB)
 				return VFW_E_TYPE_NOT_ACCEPTED;
 			// Media type accepted
 			return S_OK;
@@ -183,7 +184,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			// Valid pointer?
 			CheckPointer(Out, E_POINTER);
 			// Input pin isn't connected
-			if(!m_pInput->IsConnected())
+			if(!this->m_pInput->IsConnected())
 				return VFW_E_NOT_CONNECTED;
 			// Item pick error
 			if(position < 0)
@@ -192,7 +193,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			if(position > 0)
 				return VFW_S_NO_MORE_ITEMS;
 			// Output type = input type
-			HRESULT hr = m_pInput->ConnectionMediaType(Out);
+			HRESULT hr = this->m_pInput->ConnectionMediaType(Out);
 			if(FAILED(hr))
 				return hr;
 			// Output accepted
@@ -215,11 +216,11 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			CheckPointer(alloc, E_POINTER);
 			CheckPointer(props, E_POINTER);
 			// Input pin isn't connected
-			if(!m_pInput->IsConnected())
+			if(!this->m_pInput->IsConnected())
 				return VFW_E_NOT_CONNECTED;
 			// Set buffer size
 			props->cBuffers = 1;
-			props->cbBuffer = m_pInput->CurrentMediaType().GetSampleSize();
+			props->cbBuffer = this->m_pInput->CurrentMediaType().GetSampleSize();
 			// Allocate buffer memory
 			ALLOCATOR_PROPERTIES actual;
 			HRESULT hr = alloc->SetProperties(props,&actual);
@@ -254,13 +255,22 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			hr = Out->GetPointer(&dst);
 			if(FAILED(hr))
 				return hr;
+			// Get bitmap info
+			BITMAPINFOHEADER *bmp_in = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pInput->CurrentMediaType().pbFormat)->bmiHeader;
+			BITMAPINFOHEADER *bmp_out = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pOutput->CurrentMediaType().pbFormat)->bmiHeader;
+			// Calculate pitch (from BITMAPINFOHEADER remarks)
+			int pitch = (((bmp_in->biWidth * bmp_in->biBitCount) + 31) & ~31) >> 3;
 			// Copy image to output
 			std::copy(src, src+In->GetActualDataLength(), dst);
-			// Get bitmap info
-			BITMAPINFOHEADER *bmp = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pInput->CurrentMediaType().pbFormat)->bmiHeader;
 			// Filter output
-			if(this->renderer)
-				ssb_render(this->renderer, dst, bmp->biBitCount == 24 ? bmp->biWidth * 3 : bmp->biWidth << 2, start / 10000);
+			if(this->renderer){
+				if(bmp_in->biHeight < 0)
+					frame_flip_y(dst, pitch, abs(bmp_in->biHeight));
+				ssb_render(this->renderer, dst, pitch, start / 10000);
+				if(bmp_out->biHeight < 0)
+					frame_flip_y(dst, pitch, abs(bmp_out->biHeight));
+			}else if(bmp_in->biHeight != bmp_out->biHeight)
+				frame_flip_y(dst, pitch, abs(bmp_in->biHeight));
 			// Frame successfully filtered
 			return S_OK;
 		}
@@ -277,7 +287,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			std::string filename = this->GetFile();
 			// Create renderer
 			if(!filename.empty())
-				if(!(this->renderer = ssb_create_renderer(bmp->biWidth, bmp->biHeight, bmp->biBitCount == 32 ? SSB_BGRA : SSB_BGR, filename.c_str(), NULL)))
+				if(!(this->renderer = ssb_create_renderer(bmp->biWidth, abs(bmp->biHeight), bmp->biBitCount == 32 ? SSB_BGRX : SSB_BGR, filename.c_str(), NULL)))
 					return VFW_E_WRONG_STATE;
 			// Continue with default behaviour
 			return CVideoTransformFilter::StartStreaming();
@@ -355,12 +365,12 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 // Filter pins
 const AMOVIESETUP_MEDIATYPE sudPinTypes[] =
 {
-	// Support RGB colorspace
+	// Support RGB24 colorspace
 	{
 		&MEDIATYPE_Video,
 		&MEDIASUBTYPE_RGB24
 	},
-	// Support RGBA colorspace
+	// Support RGB32 colorspace
 	{
 		&MEDIATYPE_Video,
 		&MEDIASUBTYPE_RGB32

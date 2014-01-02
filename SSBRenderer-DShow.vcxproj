@@ -14,6 +14,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\file_info.h" />
+    <ClInclude Include="src\imgconv.hpp" />
     <ClInclude Include="src\textconv.hpp" />
   </ItemGroup>
   <ItemGroup>
