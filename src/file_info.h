@@ -17,8 +17,8 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 #define FILTER_NAME "SSBRenderer-DShow"
 #define FILTER_NAMEW L"SSBRenderer-DShow"
-#define FILTER_VERSION 0,0,1,0
-#define FILTER_VERSION_STRING "0.0.1"
+#define FILTER_VERSION 0,0,2,0
+#define FILTER_VERSION_STRING "0.0.2"
 #define FILTER_DESC "SSBRenderer for DirectShow."
 #define FILTER_AUTHOR "Youka"
 #define FILTER_COPYRIGHT FILTER_AUTHOR ", © 2013"

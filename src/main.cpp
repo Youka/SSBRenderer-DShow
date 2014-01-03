@@ -78,13 +78,12 @@ class TaskIcon{
 			this->data.on_click = on_click;
 			this->data.userdata = userdata;
 			// Register window class
-			WNDCLASSEXW wnd_class = {0};
-			wnd_class.cbSize = sizeof(WNDCLASSEXW);
+			WNDCLASSW wnd_class = {0};
 			wnd_class.lpfnWndProc = get_window_messages;
 			wnd_class.hInstance = DLL_INSTANCE;
 			wnd_class.hIcon = ico;
 			wnd_class.lpszClassName = this->name;
-			RegisterClassEx(&wnd_class);
+			RegisterClass(&wnd_class);
 			// Create window
 			this->wnd = CreateWindowW(this->name, L"Taskicon dummy window", 0x0, 0, 0, 100, 100, NULL, NULL, DLL_INSTANCE, NULL);
 			SetWindowLongPtrW(wnd, GWLP_USERDATA, reinterpret_cast<LONG>(&this->data));
@@ -238,39 +237,50 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			// Valid pointers?
 			CheckPointer(In, E_POINTER);
 			CheckPointer(Out, E_POINTER);
+			// Get bitmap info
+			BITMAPINFOHEADER *bmp_in = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pInput->CurrentMediaType().pbFormat)->bmiHeader;
+			BITMAPINFOHEADER *bmp_out = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pOutput->CurrentMediaType().pbFormat)->bmiHeader;
+			// Calculate pitches (from BITMAPINFOHEADER remarks)
+			int pitch_src = (((bmp_in->biWidth * bmp_in->biBitCount) + 31) & ~31) >> 3;
+			int pitch_dst = (((bmp_out->biWidth * bmp_in->biBitCount) + 31) & ~31) >> 3;
+			// Get absolute frame height
+			int abs_height = ::abs(bmp_in->biHeight);
 			// Set output size
-			Out->SetActualDataLength(In->GetActualDataLength());
-			// Declarations
-			BYTE *src, *dst;
-			LONGLONG start, end;
-			HRESULT hr;
-			// Get time
-			hr = In->GetTime(&start, &end);
-			if(FAILED(hr))
-				return hr;
+			Out->SetActualDataLength(abs_height * pitch_dst);
 			// Get frame pointers
+			BYTE *src, *dst;
+			HRESULT hr;
 			hr = In->GetPointer(&src);
 			if(FAILED(hr))
 				return hr;
 			hr = Out->GetPointer(&dst);
 			if(FAILED(hr))
 				return hr;
-			// Get bitmap info
-			BITMAPINFOHEADER *bmp_in = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pInput->CurrentMediaType().pbFormat)->bmiHeader;
-			BITMAPINFOHEADER *bmp_out = &reinterpret_cast<VIDEOINFOHEADER*>(this->m_pOutput->CurrentMediaType().pbFormat)->bmiHeader;
-			// Calculate pitch (from BITMAPINFOHEADER remarks)
-			int pitch = (((bmp_in->biWidth * bmp_in->biBitCount) + 31) & ~31) >> 3;
 			// Copy image to output
-			std::copy(src, src+In->GetActualDataLength(), dst);
+			if(pitch_src == pitch_dst)
+				std::copy(src, src+In->GetActualDataLength(), dst);
+			else{
+				unsigned char* psrc = src, *pdst = dst;
+				for(int y = 0; y < abs_height; y++){
+					std::copy(psrc, psrc+pitch_src, pdst);
+					psrc += pitch_src;
+					pdst += pitch_dst;
+				}
+			}
+			// Get time
+			LONGLONG start, end;
+			hr = In->GetTime(&start, &end);
+			if(FAILED(hr))
+				return hr;
 			// Filter output
 			if(this->renderer){
 				if(bmp_in->biHeight < 0)
-					frame_flip_y(dst, pitch, abs(bmp_in->biHeight));
-				ssb_render(this->renderer, dst, pitch, start / 10000);
+					frame_flip_y(dst, pitch_dst, abs_height);
+				ssb_render(this->renderer, dst, pitch_dst, start / 10000);
 				if(bmp_out->biHeight < 0)
-					frame_flip_y(dst, pitch, abs(bmp_out->biHeight));
+					frame_flip_y(dst, pitch_dst, abs_height);
 			}else if(bmp_in->biHeight != bmp_out->biHeight)
-				frame_flip_y(dst, pitch, abs(bmp_in->biHeight));
+				frame_flip_y(dst, pitch_dst, abs_height);
 			// Frame successfully filtered
 			return S_OK;
 		}
@@ -287,7 +297,7 @@ class SSBRenderer : public CVideoTransformFilter, public ISSBRendererConfig{
 			std::string filename = this->GetFile();
 			// Create renderer
 			if(!filename.empty())
-				if(!(this->renderer = ssb_create_renderer(bmp->biWidth, abs(bmp->biHeight), bmp->biBitCount == 32 ? SSB_BGRX : SSB_BGR, filename.c_str(), NULL)))
+				if(!(this->renderer = ssb_create_renderer(bmp->biWidth, ::abs(bmp->biHeight), bmp->biBitCount == 32 ? SSB_BGRX : SSB_BGR, filename.c_str(), NULL)))
 					return VFW_E_WRONG_STATE;
 			// Continue with default behaviour
 			return CVideoTransformFilter::StartStreaming();
