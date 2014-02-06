@@ -19,7 +19,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 // Include windows streams
 #include <streams.h>
 // Include SSBRenderer
-#include "user.h"
+#include <user.h>
 // File informations
 #include "file_info.h"
 // Include other necessary classes

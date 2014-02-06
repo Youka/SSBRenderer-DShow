@@ -10,15 +10,15 @@
     <ClCompile Include="src\main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="src\file_info.rc" />
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="src\file_info.h" />
     <ClInclude Include="src\imgconv.hpp" />
     <ClInclude Include="src\textconv.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="src\exports.def" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\file_info.rc" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{6D98CBDA-AFF1-4EFD-8AD3-55E6D9DA4284}</ProjectGuid>
